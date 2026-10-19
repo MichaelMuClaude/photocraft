@@ -471,7 +471,10 @@ fn commit_path(app: &mut PhotocraftApp, pen: &PenPath, closed: bool) {
         if target.is_some() {
             params["op"] = json!("combine");
         }
-        app.run("path.set", params).inspect(|_| app.ui.selected_path = Some(name))
+        app.run("path.set", params).inspect(|_| {
+            app.ui.selected_path = Some(name);
+            app.ui.work_path_hidden = false;
+        })
     };
     if let Err(e) = r {
         app.ui.status = e;
@@ -700,6 +703,7 @@ pub fn path_to_selection(app: &mut PhotocraftApp, params: Value) -> Result<Value
         let on_layer = app.ui.tool_options.vector_mode == "shape" || targeted_vector_mask(app).is_some();
         pen_commit(app, false);
         app.ui.selected_path = Some(if on_layer { "layer" } else { "work" }.into());
+        app.ui.work_path_hidden = false;
     }
     let name = active_path_name(app)
         .ok_or_else(|| tl!("No path to make a selection from: draw one with the Pen tool or select one in the Paths panel.").to_string())?;
@@ -1003,7 +1007,9 @@ pub fn draw_overlay(app: &PhotocraftApp, painter: &egui::Painter, xf: &ViewXform
     } else if paths {
         // Paths remain visible as outlines with any tool. Path Selection adds anchor squares; Direct
         // Selection has its own overlay above.
-        if let Some(wp) = &doc.work_path {
+        if let Some(wp) = &doc.work_path
+            && !app.ui.work_path_hidden
+        {
             draw_path(wp, tool == Tool::PathSelection);
         }
         let st = app.session.active();
@@ -1796,6 +1802,7 @@ pub fn paths_panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                     action = Some(("path.toSelection", json!({"name": key, "mode": mode})));
                 } else if resp.clicked() {
                     app.ui.selected_path = Some(key.clone());
+                    app.ui.work_path_hidden = false;
                 }
                 // Double-clicking the Work Path saves it (Photoshop's "Save Path").
                 if !load && resp.double_clicked() && *kind == PathRow::Work {
@@ -1829,6 +1836,7 @@ pub fn paths_panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             let rest = rest.intersect(Rect::from_min_size(rest.min, vec2(rest.width(), rest.height().min(4000.0))));
             if rest.is_positive() && ui.interact(rest, ui.id().with("paths-empty"), Sense::click()).clicked() {
                 app.ui.selected_path = None;
+                app.ui.work_path_hidden = true;
             }
         },
     );

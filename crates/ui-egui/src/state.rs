@@ -1167,6 +1167,13 @@ pub struct UiState {
     /// Selected row in the Paths panel ("work" or a saved path name).
     #[serde(default)]
     pub selected_path: Option<String>,
+    /// Set when the user explicitly clicks the Paths panel's empty area to deselect (#7461): the
+    /// work path's canvas outline then stays hidden even though `doc.work_path` is still `Some`,
+    /// distinguishing "explicitly deselected" from `selected_path`'s default `None` ("nothing
+    /// selected yet"), which must keep showing the work path for existing callers (e.g. a work
+    /// path set directly through the engine, with no panel interaction at all).
+    #[serde(default)]
+    pub work_path_hidden: bool,
     /// Layers panel kind filter ("pixel", "adjustment", "type", "shape", "smart"); empty = all.
     #[serde(default)]
     pub layer_filter: Vec<String>,
@@ -1357,6 +1364,7 @@ impl Default for UiState {
             direct_selection: Default::default(),
             corner_radius: None,
             selected_path: None,
+            work_path_hidden: false,
             panels: Panels::default(),
             views: Vec::new(),
             dialogs: Vec::new(),
