@@ -360,7 +360,8 @@ fn deselecting_in_paths_panel_sets_work_path_hidden() {
     PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
     h.run_steps(6);
 
-    assert!(!h.state().ui.work_path_hidden, "a freshly selected work path must not start hidden");
+    let doc_id = h.state().session.active().unwrap().doc.id.0;
+    assert!(!h.state().ui.work_path_hidden.contains(&doc_id), "a freshly selected work path must not start hidden");
 
     // Click the Paths panel's empty area below the "Work Path" row, exactly as a user would.
     let row = h.get_by_label("Work Path").rect();
@@ -368,7 +369,65 @@ fn deselecting_in_paths_panel_sets_work_path_hidden() {
     click(&mut h, empty_at, Modifiers::NONE);
 
     assert!(h.state().ui.selected_path.is_none(), "clicking the empty area should clear selected_path");
-    assert!(h.state().ui.work_path_hidden, "clicking the empty area should hide the work path overlay");
+    assert!(h.state().ui.work_path_hidden.contains(&doc_id), "clicking the empty area should hide the work path overlay");
+}
+
+/// #7461 review follow-up: `work_path_hidden` must be scoped per document, not a single flag —
+/// otherwise deselecting the work path in one open document would wrongly hide it in every other
+/// open document too, since `doc.work_path.is_some()` is a per-document condition.
+#[test]
+fn hiding_the_work_path_in_one_document_does_not_affect_another() {
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({"width": 200, "height": 200})).unwrap();
+    app.run("path.set", json!({"name": "work", "path": rect_path(0.0, 0.0, 10.0, 10.0)})).unwrap();
+    let doc_a = app.session.active().unwrap().doc.id;
+
+    let other = app.session.active().unwrap().doc.as_ref().clone();
+    app.session.add_document(other, None);
+    app.run("path.set", json!({"name": "work", "path": rect_path(0.0, 0.0, 10.0, 10.0)})).unwrap();
+    let doc_b = app.session.active().unwrap().doc.id;
+    assert_ne!(doc_a, doc_b, "the cloned document must get a fresh id");
+
+    crate::vector_ui::hide_work_path(&mut app, doc_a);
+    assert!(app.ui.work_path_hidden.contains(&doc_a.0));
+    assert!(!app.ui.work_path_hidden.contains(&doc_b.0), "hiding doc A's work path must not hide doc B's");
+
+    crate::vector_ui::hide_work_path(&mut app, doc_b);
+    crate::vector_ui::show_work_path(&mut app, doc_a);
+    assert!(!app.ui.work_path_hidden.contains(&doc_a.0), "showing doc A's work path must not affect doc B");
+    assert!(app.ui.work_path_hidden.contains(&doc_b.0));
+}
+
+/// #7461 review follow-up: a fourth call site CodeRabbit's initial review caught — making a new
+/// work path from a selection (the Paths panel's "Make work path from selection" button, bound to
+/// `select.toWorkPath`) — also needs to clear a previously-hidden work path.
+#[test]
+fn select_to_work_path_shows_a_previously_hidden_work_path() {
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({"width": 200, "height": 200})).unwrap();
+    app.run("select.rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})).unwrap();
+    let doc_id = app.session.active().unwrap().doc.id;
+    crate::vector_ui::hide_work_path(&mut app, doc_id);
+    assert!(app.ui.work_path_hidden.contains(&doc_id.0));
+
+    let mut h = Harness::builder().with_size(vec2(400.0, 400.0)).build_ui_state(
+        |ui, app: &mut PhotocraftApp| {
+            let ctx = ui.ctx().clone();
+            if !ctx.fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
+                return;
+            }
+            egui::CentralPanel::default().show(ui, |ui| crate::vector_ui::paths_panel(app, ui));
+        },
+        app,
+    );
+    PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ALL[0]);
+    h.run_steps(6);
+
+    let at = h.get_by_label("Make work path from selection").rect().center();
+    click(&mut h, at, Modifiers::NONE);
+
+    assert!(h.state().session.active().unwrap().doc.work_path.is_some(), "the selection should have become a work path: {}", h.state().ui.status);
+    assert!(!h.state().ui.work_path_hidden.contains(&doc_id.0), "making a new work path from the selection must show it");
 }
 
 /// See `deselecting_in_paths_panel_sets_work_path_hidden` above for the panel half of #7461; this
@@ -381,7 +440,8 @@ fn work_path_outline_respects_work_path_hidden() {
         app.sync_views();
         app.run("path.set", json!({"name": "work", "path": rect_path(50.0, 10.0, 100.0, 80.0)})).unwrap();
         app.ui.tool = Tool::Brush;
-        app.ui.work_path_hidden = hidden;
+        let doc_id = app.session.active().unwrap().doc.id.0;
+        app.ui.work_path_hidden = if hidden { vec![doc_id] } else { Vec::new() };
 
         let mut h = Harness::builder().with_size(vec2(900.0, 700.0)).build_ui_state(
             |ui, app: &mut PhotocraftApp| {
